@@ -90,6 +90,55 @@ if __name__ == "__main__":
             'snr_output': snr_denoised,
             'snr_gain': snr_denoised - snr_noisy
         })
+        
+        # ========== 只在 sigma=0.2 时绘图 ==========
+        if sigma_noise == 0.2:
+            print(f"\n正在绘制 sigma={sigma_noise} 的时域对比图...")
+            
+            # 绘图数据准备
+            n_plot = min(len(t), len(chirp_clean), len(chirp_noisy), len(chirp_denoised))
+            t_plot = t[:n_plot]
+            chirp_clean_plot = chirp_clean[:n_plot]
+            chirp_noisy_plot = chirp_noisy[:n_plot]
+            chirp_denoised_plot = chirp_denoised[:n_plot]
+            
+            # 创建图形
+            plt.figure(figsize=(14, 10))
+            
+            # 子图1：干净信号 vs 含噪信号
+            plt.subplot(3, 1, 1)
+            plt.plot(t_plot, chirp_clean_plot, 'g-', linewidth=1.2, label='Clean', alpha=0.8)
+            plt.plot(t_plot, chirp_noisy_plot, 'r-', linewidth=0.6, label=f'Noisy ($\\sigma$={sigma_noise})', alpha=0.6)
+            plt.title(f'(a) Original vs Noisy Signal (Input SNR: {snr_noisy:.1f} dB)')
+            plt.ylabel('Amplitude')
+            plt.legend(loc='upper right')
+            plt.grid(True, alpha=0.3)
+            
+            # 子图2：干净信号 vs DCNN去噪信号
+            plt.subplot(3, 1, 2)
+            plt.plot(t_plot, chirp_clean_plot, 'g-', linewidth=1.2, label='Clean', alpha=0.8)
+            plt.plot(t_plot, chirp_denoised_plot, 'b-', linewidth=1, label='Denoised (DCNN)')
+            plt.title(f'(b) Original vs Denoised Signal (Output SNR: {snr_denoised:.1f} dB, Gain: {snr_denoised-snr_noisy:.1f} dB)')
+            plt.ylabel('Amplitude')
+            plt.legend(loc='upper right')
+            plt.grid(True, alpha=0.3)
+            
+            # 子图3：去噪前后误差对比
+            plt.subplot(3, 1, 3)
+            error_noisy = chirp_noisy_plot - chirp_clean_plot
+            error_denoised = chirp_denoised_plot - chirp_clean_plot
+            plt.plot(t_plot, error_noisy, 'r-', linewidth=0.5, alpha=0.5, label=f'Noisy Error (Var: {np.var(error_noisy):.4f})')
+            plt.plot(t_plot, error_denoised, 'b-', linewidth=0.8, label=f'Denoised Error (Var: {np.var(error_denoised):.4f})')
+            plt.xlabel('Time (s)')
+            plt.ylabel('Error Amplitude')
+            plt.title('(c) Reconstruction Error Comparison')
+            plt.legend(loc='upper right')
+            plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig('dcnn_time_domain_result.png', dpi=300, bbox_inches='tight')
+            plt.show()
+            print("图像已保存为: dcnn_time_domain_result.png")
     
     # 打印汇总表格
     print("\n" + "="*60)
