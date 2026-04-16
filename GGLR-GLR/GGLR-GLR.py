@@ -168,7 +168,7 @@ for sigma_noise in sigma_list:
         
         # ========== Figure 1: 时域去噪效果对比 ==========
         plt.figure(figsize=(14, 10))
-        
+
         plt.subplot(3,1,1)
         plt.plot(t_plot, chirp_clean_plot, 'g-', linewidth=1.2, label='Clean', alpha=0.8)
         plt.plot(t_plot, chirp_noisy_plot, 'r-', linewidth=0.6, label=f'Noisy ($\\sigma$={sigma_noise})', alpha=0.6)
@@ -176,7 +176,7 @@ for sigma_noise in sigma_list:
         plt.ylabel('Amplitude')
         plt.legend(loc='upper right')
         plt.grid(True, alpha=0.3)
-        
+
         plt.subplot(3,1,2)
         plt.plot(t_plot, chirp_clean_plot, 'g-', linewidth=1.2, label='Clean', alpha=0.8)
         plt.plot(t_plot, chirp_denoised_plot, 'b-', linewidth=1, label='Denoised (Ours)')
@@ -184,7 +184,7 @@ for sigma_noise in sigma_list:
         plt.ylabel('Amplitude')
         plt.legend(loc='upper right')
         plt.grid(True, alpha=0.3)
-        
+
         plt.subplot(3,1,3)
         error_noisy = chirp_noisy_plot - chirp_clean_plot
         error_denoised = chirp_denoised_plot - chirp_clean_plot
@@ -195,14 +195,16 @@ for sigma_noise in sigma_list:
         plt.title('(c) Reconstruction Error Comparison')
         plt.legend(loc='upper right')
         plt.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
-        plt.savefig('time_domain_result.pdf', dpi=300, bbox_inches='tight')
+
+        if sigma_noise == 0.2:
+            plt.savefig('time_domain_result.png', dpi=300, bbox_inches='tight')  # 保存为 PNG
         plt.show()
-        
+
         # ========== Figure 2: 时频域恢复效果 ==========
         plt.figure(figsize=(14, 8))
-        
+
         plt.subplot(2,2,1)
         plt.plot(t_freq, freq_clean_plot, 'g-', linewidth=1.5, label='Ground Truth')
         plt.plot(t_freq, fd_plot, 'b-', linewidth=1.2, label='GGLR Recovered')
@@ -211,7 +213,7 @@ for sigma_noise in sigma_list:
         plt.ylabel('Frequency (Hz)')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        
+
         plt.subplot(2,2,2)
         plt.hist(freq_error_noisy, bins=40, alpha=0.5, color='red', label=f'Noisy (STD={np.std(freq_error_noisy):.2f})')
         plt.hist(freq_error_denoised, bins=40, alpha=0.5, color='blue', label=f'Recovered (STD={np.std(freq_error_denoised):.2f})')
@@ -220,7 +222,7 @@ for sigma_noise in sigma_list:
         plt.title('(b) Frequency Error Distribution')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        
+
         plt.subplot(2,2,3)
         plt.plot(t_amp, a_clean_plot, 'g-', linewidth=1.5, label='Ground Truth')
         plt.plot(t_amp, ad_plot, 'b-', linewidth=1.2, label='GLR Smoothed')
@@ -229,7 +231,7 @@ for sigma_noise in sigma_list:
         plt.ylabel('Amplitude')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        
+
         plt.subplot(2,2,4)
         plt.plot(t_amp, a_plot - a_clean_plot, 'r-', linewidth=0.6, alpha=0.5, label='Noisy Error')
         plt.plot(t_amp, ad_plot - a_clean_plot, 'b-', linewidth=0.8, label='Smoothed Error')
@@ -238,7 +240,8 @@ for sigma_noise in sigma_list:
         plt.title('(d) Amplitude Error Comparison')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
-        plt.savefig('frequency_amplitude_result.pdf', dpi=300, bbox_inches='tight')
+        if sigma_noise == 0.2:
+            plt.savefig('frequency_amplitude_result.png', dpi=300, bbox_inches='tight')  # 保存为 PNG
         plt.show()
