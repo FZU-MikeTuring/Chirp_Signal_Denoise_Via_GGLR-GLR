@@ -167,32 +167,24 @@ for sigma_noise in sigma_list:
         freq_error_denoised = fd_plot - freq_clean_plot
         
         # ========== Figure 1: 时域去噪效果对比 ==========
-        plt.figure(figsize=(14, 10))
+        plt.figure(figsize=(14, 7))
 
-        plt.subplot(3,1,1)
+        plt.subplot(2,1,1)
         plt.plot(t_plot, chirp_clean_plot, 'g-', linewidth=1.2, label='Clean', alpha=0.8)
         plt.plot(t_plot, chirp_noisy_plot, 'r-', linewidth=0.6, label=f'Noisy ($\\sigma$={sigma_noise})', alpha=0.6)
-        plt.title(f'(a) Original vs Noisy Signal (Input SNR: {snr_noisy:.1f} dB)')
+        plt.title(f'(a) Clean vs Noisy Signal (Input SNR: {snr_noisy:.1f} dB)')
         plt.ylabel('Amplitude')
         plt.legend(loc='upper right')
         plt.grid(True, alpha=0.3)
 
-        plt.subplot(3,1,2)
-        plt.plot(t_plot, chirp_clean_plot, 'g-', linewidth=1.2, label='Clean', alpha=0.8)
-        plt.plot(t_plot, chirp_denoised_plot, 'b-', linewidth=1, label='Denoised (Ours)')
-        plt.title(f'(b) Original vs Denoised Signal (Output SNR: {snr_denoised:.1f} dB, Gain: {snr_denoised-snr_noisy:.1f} dB)')
-        plt.ylabel('Amplitude')
-        plt.legend(loc='upper right')
-        plt.grid(True, alpha=0.3)
-
-        plt.subplot(3,1,3)
+        plt.subplot(2,1,2)
         error_noisy = chirp_noisy_plot - chirp_clean_plot
         error_denoised = chirp_denoised_plot - chirp_clean_plot
-        plt.plot(t_plot, error_noisy, 'r-', linewidth=0.5, alpha=0.5, label=f'Noisy Error (Var: {np.var(error_noisy):.4f})')
-        plt.plot(t_plot, error_denoised, 'b-', linewidth=0.8, label=f'Denoised Error (Var: {np.var(error_denoised):.4f})')
+        plt.plot(t_plot, error_noisy, 'r-', linewidth=0.5, alpha=0.5, label=f'Noisy Residual (Var: {np.var(error_noisy):.4f})')
+        plt.plot(t_plot, error_denoised, 'b-', linewidth=0.8, label=f'Denoised Residual (Var: {np.var(error_denoised):.4f})')
         plt.xlabel('Time (s)')
-        plt.ylabel('Error Amplitude')
-        plt.title('(c) Reconstruction Error Comparison')
+        plt.ylabel('Residual Amplitude')
+        plt.title(f'(b) Residual Comparison (Output SNR: {snr_denoised:.1f} dB, Gain: {snr_denoised-snr_noisy:.1f} dB)')
         plt.legend(loc='upper right')
         plt.grid(True, alpha=0.3)
 
