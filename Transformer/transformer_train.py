@@ -51,6 +51,7 @@ if __name__ == "__main__":
     T = 1
     a0 = 50.0
     end_amplitudes = [40.0, 20.0, 1.0]
+    normalize_scale = a0
     num_samples = 5000
     batch_size = 32
     epochs = 100
@@ -70,6 +71,7 @@ if __name__ == "__main__":
         f"num_encoder_blocks={num_encoder_blocks}"
     )
     print(f"Amplitude decay modes: a0={a0}, a1 in {end_amplitudes}")
+    print(f"Normalization scale: {normalize_scale}")
 
     dataset = ChirpDataset(
         num_samples=num_samples,
@@ -78,6 +80,7 @@ if __name__ == "__main__":
         seed=42,
         a0=a0,
         end_amplitudes=end_amplitudes,
+        normalize_scale=normalize_scale,
     )
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 

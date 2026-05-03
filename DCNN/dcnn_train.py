@@ -49,6 +49,8 @@ if __name__ == "__main__":
     N = int(fs * T)
     a0 = 50.0
     end_amplitudes = [40.0, 20.0, 1.0]
+    normalize_scale = a0
+    output_scale = a0
     num_samples = 5000
     batch_size = 32
     epochs = 100
@@ -57,6 +59,8 @@ if __name__ == "__main__":
 
     print(f"Using device: {device}")
     print(f"Amplitude decay modes: a0={a0}, a1 in {end_amplitudes}")
+    print(f"Normalization scale: {normalize_scale}")
+    print(f"Model output scale: {output_scale}")
 
     dataset = ChirpDataset(
         num_samples=num_samples,
@@ -65,10 +69,11 @@ if __name__ == "__main__":
         seed=42,
         a0=a0,
         end_amplitudes=end_amplitudes,
+        normalize_scale=normalize_scale,
     )
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = DCNN(input_channels=1, N=N)
+    model = DCNN(input_channels=1, N=N, output_scale=output_scale)
     print(f"Model parameter count: {sum(p.numel() for p in model.parameters())}")
 
     model = train(model, dataloader, epochs=epochs, lr=lr, device=device, save_path="dcnn_model.pth")

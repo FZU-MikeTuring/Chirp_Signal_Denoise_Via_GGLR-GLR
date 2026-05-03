@@ -5,6 +5,9 @@ import torch
 from transformer_model import Transformer
 
 
+NORMALIZATION_SCALE = 50.0
+
+
 def calculate_snr(clean_signal, noisy_signal, ignore_ratio=0.1):
     n = len(clean_signal)
     ignore = int(n * ignore_ratio)
@@ -34,9 +37,11 @@ def generate_chirp_signal(fs=1000, T=1, f0=50, f1=200, a0=50, a1=1, sigma=None, 
 def denoise(model, noisy_signal, device="cuda"):
     model.eval()
     with torch.no_grad():
-        noisy_tensor = torch.FloatTensor(noisy_signal).unsqueeze(0).unsqueeze(-1).to(device)
+        noisy_tensor = (
+            torch.FloatTensor(noisy_signal / NORMALIZATION_SCALE).unsqueeze(0).unsqueeze(-1).to(device)
+        )
         denoised_tensor = model(src=noisy_tensor)
-        denoised = denoised_tensor.squeeze().cpu().numpy()
+        denoised = denoised_tensor.squeeze().cpu().numpy() * NORMALIZATION_SCALE
     return denoised
 
 

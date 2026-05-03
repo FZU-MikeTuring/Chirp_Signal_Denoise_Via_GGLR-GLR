@@ -31,12 +31,12 @@ def generate_chirp_signal(fs=1000, T=1, f0=50, f1=200, a0=50, a1=1, sigma=None, 
     return t, chirp_clean, chirp_noisy
 
 
-def denoise(model, noisy_signal, device="cuda"):
+def denoise(model, noisy_signal, normalize_scale, device="cuda"):
     model.eval()
     with torch.no_grad():
-        noisy_tensor = torch.FloatTensor(noisy_signal).unsqueeze(0).unsqueeze(0).to(device)
+        noisy_tensor = torch.FloatTensor(noisy_signal / normalize_scale).unsqueeze(0).unsqueeze(0).to(device)
         denoised_tensor = model(noisy_tensor)
-        denoised = denoised_tensor.squeeze().cpu().numpy()
+        denoised = denoised_tensor.squeeze().cpu().numpy() * normalize_scale
     return denoised
 
 
@@ -47,15 +47,19 @@ if __name__ == "__main__":
     f1 = 200
     a0 = 50
     a1 = 1
+    normalize_scale = float(a0)
+    output_scale = 1.0
     N = int(fs * T)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = DCNN(input_channels=1, N=N)
+    model = DCNN(input_channels=1, N=N, output_scale=output_scale)
     model.load_state_dict(torch.load("dcnn_model.pth", map_location=device))
     model = model.to(device)
     model.eval()
     print(f"Model loaded on device: {device}")
     print(f"Amplitude decay setting: a0={a0}, a1={a1}")
+    print(f"Normalization scale: {normalize_scale}")
+    print(f"Model output scale: {output_scale}")
 
     sigma_list = [20, 10, 5, 2, 1, 0.5]
     random_seed = 42
@@ -74,7 +78,7 @@ if __name__ == "__main__":
             fs, T, f0, f1, a0=a0, a1=a1, sigma=sigma_noise, seed=random_seed
         )
 
-        chirp_denoised = denoise(model, chirp_noisy, device)
+        chirp_denoised = denoise(model, chirp_noisy, normalize_scale=normalize_scale, device=device)
 
         snr_noisy = calculate_snr(chirp_clean, chirp_noisy)
         snr_denoised = calculate_snr(chirp_clean, chirp_denoised)

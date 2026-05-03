@@ -113,19 +113,19 @@ def extract_clean_features(chirp_clean, fs):
     }
 
 
-def load_dcnn(device, signal_length):
-    model = DCNN(input_channels=1, N=signal_length)
+def load_dcnn(device, signal_length, output_scale):
+    model = DCNN(input_channels=1, N=signal_length, output_scale=output_scale)
     model.load_state_dict(torch.load(DCNN_DIR / "dcnn_model.pth", map_location=device))
     model = model.to(device)
     model.eval()
     return model
 
 
-def dcnn_denoise(model, noisy_signal, device):
+def dcnn_denoise(model, noisy_signal, normalize_scale, device):
     with torch.no_grad():
-        noisy_tensor = torch.FloatTensor(noisy_signal).unsqueeze(0).unsqueeze(0).to(device)
+        noisy_tensor = torch.FloatTensor(noisy_signal / normalize_scale).unsqueeze(0).unsqueeze(0).to(device)
         denoised_tensor = model(noisy_tensor)
-    return denoised_tensor.squeeze().cpu().numpy()
+    return denoised_tensor.squeeze().cpu().numpy() * normalize_scale
 
 
 def load_transformer(device):
@@ -147,9 +147,11 @@ def load_transformer(device):
 
 def transformer_denoise(model, noisy_signal, device):
     with torch.no_grad():
-        noisy_tensor = torch.FloatTensor(noisy_signal).unsqueeze(0).unsqueeze(-1).to(device)
+        noisy_tensor = (
+            torch.FloatTensor(noisy_signal / NORMALIZATION_SCALE).unsqueeze(0).unsqueeze(-1).to(device)
+        )
         denoised_tensor = model(src=noisy_tensor)
-    return denoised_tensor.squeeze().cpu().numpy()
+    return denoised_tensor.squeeze().cpu().numpy() * NORMALIZATION_SCALE
 
 
 def save_figure(fig, filename):
@@ -502,6 +504,8 @@ def main():
     seed = 42
     ignore_ratio = 0.1
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    normalize_scale = a0
+    dcnn_output_scale = 1.0
     sigmaa = 600
     lambdaa = 100
     sigmaf = 600
@@ -519,9 +523,9 @@ def main():
     )
     chirp_proposed = proposed_features["chirp_denoised"]
 
-    dcnn_model = load_dcnn(device, len(chirp_clean))
+    dcnn_model = load_dcnn(device, len(chirp_clean), output_scale=dcnn_output_scale)
     transformer_model = load_transformer(device)
-    chirp_dcnn = dcnn_denoise(dcnn_model, chirp_noisy, device)
+    chirp_dcnn = dcnn_denoise(dcnn_model, chirp_noisy, normalize_scale=normalize_scale, device=device)
     chirp_transformer = transformer_denoise(transformer_model, chirp_noisy, device)
 
     plot_observation_and_restoration_figures(t, clean_features, proposed_features)
@@ -552,7 +556,12 @@ def main():
             lambdaf=lambdaf,
             epochs=epochs,
         )["chirp_denoised"]
-        chirp_dcnn_sigma = dcnn_denoise(dcnn_model, chirp_noisy_sigma, device)
+        chirp_dcnn_sigma = dcnn_denoise(
+            dcnn_model,
+            chirp_noisy_sigma,
+            normalize_scale=normalize_scale,
+            device=device,
+        )
         chirp_transformer_sigma = transformer_denoise(transformer_model, chirp_noisy_sigma, device)
 
         snr_input = calculate_snr(chirp_clean_sigma, chirp_noisy_sigma, ignore_ratio=ignore_ratio)
