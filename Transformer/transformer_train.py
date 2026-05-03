@@ -55,7 +55,7 @@ if __name__ == "__main__":
     num_samples = 5000
     batch_size = 32
     epochs = 100
-    lr = 1e-4
+    lr = 1e-3
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     input_dim = 1
