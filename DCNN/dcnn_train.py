@@ -50,7 +50,7 @@ if __name__ == "__main__":
     a0 = 50.0
     end_amplitudes = [40.0, 20.0, 1.0]
     normalize_scale = a0
-    output_scale = a0
+    output_scale = 1.0
     num_samples = 5000
     batch_size = 32
     epochs = 100
