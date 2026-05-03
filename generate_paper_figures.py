@@ -7,15 +7,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
-from scipy.signal import hilbert
-from scipy.sparse import diags, lil_matrix
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-GGLR_DIR = ROOT_DIR / "GGLR-GLR"
+GGLR_DIR = ROOT_DIR / "GGLR"
 DCNN_DIR = ROOT_DIR / "DCNN"
 TRANSFORMER_DIR = ROOT_DIR / "Transformer"
 OUTPUT_DIR = ROOT_DIR / "generated_figures"
+
+
+def hilbert_transform(signal):
+    signal = np.asarray(signal)
+    n = signal.shape[0]
+    spectrum = np.fft.fft(signal)
+    multiplier = np.zeros(n)
+    if n % 2 == 0:
+        multiplier[0] = 1.0
+        multiplier[n // 2] = 1.0
+        multiplier[1 : n // 2] = 2.0
+    else:
+        multiplier[0] = 1.0
+        multiplier[1 : (n + 1) // 2] = 2.0
+    return np.fft.ifft(spectrum * multiplier)
 
 
 def load_symbol_from_file(module_name, file_path, symbol_name):
@@ -39,103 +52,58 @@ Transformer = load_symbol_from_file(
     TRANSFORMER_DIR / "transformer_model.py",
     "Transformer",
 )
+generate_chirp_signal_core = load_symbol_from_file("gglr_module", GGLR_DIR / "GGLR.py", "generate_chirp_signal")
+calculate_snr = load_symbol_from_file("gglr_module", GGLR_DIR / "GGLR.py", "calculate_snr")
+denoise_core = load_symbol_from_file("gglr_module", GGLR_DIR / "GGLR.py", "denoise")
 
 
-def generate_chirp_signal(fs=1000, T=1.0, f0=50.0, f1=200.0, sigma=0.2, seed=42):
-    rng = np.random.default_rng(seed)
+def generate_chirp_signal(fs=1000, T=1.0, f0=50.0, f1=200.0, a0=50.0, a1=1.0, sigma=0.2, seed=42):
     t = np.linspace(0, T, int(fs * T), endpoint=False)
-    k = (f1 - f0) / T
-    chirp_clean = np.cos(2 * np.pi * (f0 * t + 0.5 * k * t**2) + np.pi)
-    chirp_noisy = chirp_clean + sigma * rng.standard_normal(len(t))
+    chirp_clean, chirp_noisy = generate_chirp_signal_core(
+        fs=fs,
+        T=T,
+        f0=f0,
+        f1=f1,
+        a0=a0,
+        a1=a1,
+        sigma=sigma,
+        seed=seed,
+    )
     return t, chirp_clean, chirp_noisy
 
 
-def calculate_snr(clean_signal, test_signal, ignore_ratio=0.1):
-    n = len(clean_signal)
-    ignore = int(n * ignore_ratio)
-    clean_mid = clean_signal[ignore:-ignore]
-    test_mid = test_signal[ignore:-ignore]
-    noise = test_mid - clean_mid
-    signal_power = np.mean(clean_mid**2)
-    noise_power = np.mean(noise**2)
-    return 10 * np.log10(signal_power / noise_power)
-
-
-def glr(amplitude, sigma=0.1, lambda_reg=600):
-    n = len(amplitude)
-    neighbors_count = n // 2
-    weights = lil_matrix((n, n))
-
-    for i in range(n):
-        distances = np.abs(amplitude - amplitude[i]).flatten()
-        neighbors = np.argsort(distances)[1:neighbors_count + 1]
-        for j in neighbors:
-            weight = np.exp(-(distances[j] ** 2) / (2 * sigma**2))
-            weights[i, j] = weight
-            weights[j, i] = weight
-
-    degree = diags(np.array(weights.sum(axis=1)).flatten(), 0)
-    laplacian = degree - weights.tocsr()
-    system = np.eye(n) + lambda_reg * laplacian
-    return np.linalg.solve(system, amplitude)
-
-
-def gglr(frequency, sigma=600, lambda_reg=0.1):
-    n = len(frequency)
-    grad_n = n - 1
-    neighbors_count = grad_n // 2
-
-    grad_matrix = lil_matrix((grad_n, n))
-    for i in range(grad_n):
-        grad_matrix[i, i] = -1
-        grad_matrix[i, i + 1] = 1
-
-    grad_frequency = frequency[1:] - frequency[:-1]
-    weights = lil_matrix((grad_n, grad_n))
-
-    for i in range(grad_n):
-        distances = np.abs(grad_frequency - grad_frequency[i]).flatten()
-        neighbors = np.argsort(distances)[1:neighbors_count + 1]
-        for j in neighbors:
-            weight = np.exp(-(distances[j] ** 2) / (2 * sigma**2))
-            weights[i, j] = weight
-            weights[j, i] = weight
-
-    degree = diags(np.array(weights.sum(axis=1)).flatten(), 0)
-    laplacian = degree - weights.tocsr()
-    smoothness = grad_matrix.T @ laplacian @ grad_matrix
-    system = np.eye(n) + lambda_reg * smoothness
-    return np.linalg.solve(system, frequency)
-
-
-def proposed_denoise(chirp_noisy, fs, sigmaa=0.1, lambdaa=600, sigmaf=600, lambdaf=0.1):
-    analytic_noisy = hilbert(chirp_noisy)
-    amplitude_noisy = np.abs(analytic_noisy)
-    phase_noisy = np.unwrap(np.angle(analytic_noisy))
-    init_phase = phase_noisy[0]
+def proposed_denoise(chirp_noisy, fs, sigmaa=600, lambdaa=100, sigmaf=600, lambdaf=0.1, epochs=3):
+    analytic_observed = hilbert_transform(chirp_noisy)
+    amplitude_noisy = np.abs(analytic_observed)
+    phase_noisy = np.unwrap(np.angle(analytic_observed))
     frequency_noisy = np.diff(phase_noisy) / (2 * np.pi) * fs
 
-    amplitude_restored = glr(amplitude_noisy, sigma=sigmaa, lambda_reg=lambdaa)
-    frequency_restored = gglr(frequency_noisy, sigma=sigmaf, lambda_reg=lambdaf)
-
-    phase_increment = np.cumsum(frequency_restored) * (2 * np.pi / fs)
-    phase_reconstructed = np.full(len(phase_increment) + 1, init_phase)
-    phase_reconstructed[1:] += phase_increment
-
-    chirp_denoised = np.real(amplitude_restored * np.exp(1j * phase_reconstructed))
+    current_signal = denoise_core(
+        chirp_noisy,
+        fs,
+        sigmaa=sigmaa,
+        lambdaa=lambdaa,
+        sigmaf=sigmaf,
+        lambdaf=lambdaf,
+        epochs=epochs,
+    )
+    analytic_current = hilbert_transform(current_signal)
+    amplitude_restored = np.abs(analytic_current)
+    phase_current = np.unwrap(np.angle(analytic_current))
+    frequency_restored = np.diff(phase_current) / (2 * np.pi) * fs
 
     return {
-        "analytic_noisy": analytic_noisy,
+        "analytic_noisy": analytic_observed,
         "amplitude_noisy": amplitude_noisy,
         "frequency_noisy": frequency_noisy,
         "amplitude_restored": amplitude_restored,
         "frequency_restored": frequency_restored,
-        "chirp_denoised": chirp_denoised,
+        "chirp_denoised": current_signal,
     }
 
 
 def extract_clean_features(chirp_clean, fs):
-    analytic_clean = hilbert(chirp_clean)
+    analytic_clean = hilbert_transform(chirp_clean)
     amplitude_clean = np.abs(analytic_clean)
     phase_clean = np.unwrap(np.angle(analytic_clean))
     frequency_clean = np.diff(phase_clean) / (2 * np.pi) * fs
@@ -200,17 +168,20 @@ def setup_style():
 
 
 def plot_framework():
-    fig, ax = plt.subplots(figsize=(14, 3.2))
+    fig, ax = plt.subplots(figsize=(16, 4.4))
     ax.axis("off")
+    ax.set_xlim(0, 1.05)
+    ax.set_ylim(-0.08, 1)
 
     boxes = [
-        (0.03, 0.3, 0.15, 0.4, "Noisy chirp"),
-        (0.22, 0.3, 0.16, 0.4, "Hilbert\ntransform"),
-        (0.42, 0.55, 0.2, 0.22, "Instantaneous\namplitude"),
-        (0.42, 0.23, 0.2, 0.22, "Instantaneous\nfrequency"),
-        (0.68, 0.55, 0.12, 0.22, "GLR"),
-        (0.68, 0.23, 0.12, 0.22, "GGLR"),
-        (0.84, 0.3, 0.13, 0.4, "Signal\nreconstruction"),
+        (0.04, 0.34, 0.13, 0.32, "Noisy chirp\nsignal"),
+        (0.22, 0.34, 0.14, 0.32, "Feature\nextraction"),
+        (0.41, 0.58, 0.14, 0.16, "Amplitude\nfeature"),
+        (0.41, 0.26, 0.14, 0.16, "Frequency\nfeature"),
+        (0.60, 0.58, 0.14, 0.16, "GGLR\n denoising"),
+        (0.60, 0.26, 0.14, 0.16, "GGLR\n denoising"),
+        (0.79, 0.34, 0.12, 0.32, "Signal\nintegration"),
+        (0.97, 0.34, 0.07, 0.32, "Iterative\nupdate"),
     ]
 
     for x, y, w, h, text in boxes:
@@ -227,18 +198,44 @@ def plot_framework():
         ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=12)
 
     arrows = [
-        ((0.18, 0.5), (0.22, 0.5)),
-        ((0.38, 0.57), (0.42, 0.66)),
-        ((0.38, 0.43), (0.42, 0.34)),
-        ((0.62, 0.66), (0.68, 0.66)),
-        ((0.62, 0.34), (0.68, 0.34)),
-        ((0.80, 0.66), (0.84, 0.57)),
-        ((0.80, 0.34), (0.84, 0.43)),
+        ((0.17, 0.50), (0.22, 0.50)),
+        ((0.36, 0.56), (0.41, 0.66)),
+        ((0.36, 0.44), (0.41, 0.34)),
+        ((0.55, 0.66), (0.60, 0.66)),
+        ((0.55, 0.34), (0.60, 0.34)),
+        ((0.74, 0.66), (0.79, 0.58)),
+        ((0.74, 0.34), (0.79, 0.42)),
+        ((0.91, 0.50), (0.97, 0.50)),
     ]
     for start, end in arrows:
-        ax.add_patch(FancyArrowPatch(start, end, arrowstyle="->", mutation_scale=14, linewidth=1.6, color="#274c77"))
+        ax.add_patch(
+            FancyArrowPatch(
+                start,
+                end,
+                arrowstyle="-|>",
+                mutation_scale=16,
+                linewidth=1.8,
+                color="#274c77",
+                shrinkA=2,
+                shrinkB=2,
+            )
+        )
 
-    ax.set_title("Overall framework of the proposed Chirp denoising method.")
+    ax.add_patch(
+        FancyArrowPatch(
+            (1.005, 0.34),
+            (0.29, 0.34),
+            connectionstyle="arc3,rad=-0.32",
+            arrowstyle="-|>",
+            mutation_scale=16,
+            linewidth=1.8,
+            color="#274c77",
+            shrinkA=2,
+            shrinkB=2,
+            clip_on=False,
+        )
+    )
+    ax.set_title("Overall framework of the iterative chirp denoising method.")
     save_figure(fig, "fig1_framework.png")
 
 
@@ -248,121 +245,151 @@ def plot_observation_and_restoration_figures(t, clean_features, proposed_feature
 
     frequency_clean = clean_features["frequency_clean"]
     amplitude_clean = clean_features["amplitude_clean"]
-    frequency_noisy = proposed_features["frequency_noisy"][: len(frequency_clean)]
-    amplitude_noisy = proposed_features["amplitude_noisy"][: len(amplitude_clean)]
-    frequency_restored = proposed_features["frequency_restored"][: len(frequency_clean)]
-    amplitude_restored = proposed_features["amplitude_restored"][: len(amplitude_clean)]
+    frequency_noisy = proposed_features["frequency_noisy"][: len(clean_features["frequency_clean"])]
+    amplitude_noisy = proposed_features["amplitude_noisy"][: len(clean_features["amplitude_clean"])]
+    frequency_restored = proposed_features["frequency_restored"][: len(clean_features["frequency_clean"])]
+    amplitude_restored = proposed_features["amplitude_restored"][: len(clean_features["amplitude_clean"])]
+
+    styles = {
+        "observed": {"color": "#e76f51", "linewidth": 1.0, "linestyle": "-", "alpha": 0.9},
+        "restored": {"color": "#1d3557", "linewidth": 1.8, "linestyle": "-.", "alpha": 0.95},
+        "theoretical": {"color": "#2a9d8f", "linewidth": 1.5, "linestyle": "--", "alpha": 0.95},
+    }
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_freq, frequency_clean, color="#2a9d8f", linewidth=1.6, label="Ground truth frequency")
-    ax.plot(t_freq, frequency_noisy, color="#e76f51", linewidth=1.0, alpha=0.8, label="Noisy extracted frequency")
+    ax.plot(t_freq, frequency_noisy, label="Observed frequency", **styles["observed"])
+    ax.plot(t_freq, frequency_clean, label="Theoretical frequency", **styles["theoretical"])
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Frequency (Hz)")
-    ax.set_title("Instantaneous frequency extracted by the Hilbert transform from a noisy Chirp signal.")
+    ax.set_title("Observed and theoretical instantaneous frequency.")
     ax.legend(loc="upper left")
     ax.grid(True, alpha=0.3)
     save_figure(fig, "fig2_hilbert_frequency_observation.png")
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_amp, amplitude_clean, color="#2a9d8f", linewidth=1.6, label="Ground truth amplitude")
-    ax.plot(t_amp, amplitude_noisy, color="#e76f51", linewidth=1.0, alpha=0.8, label="Noisy extracted amplitude")
+    ax.plot(t_amp, amplitude_noisy, label="Observed amplitude", **styles["observed"])
+    ax.plot(t_amp, amplitude_clean, label="Theoretical amplitude", **styles["theoretical"])
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
-    ax.set_title("Amplitude envelope extracted by the Hilbert transform from a noisy Chirp signal.")
+    ax.set_title("Observed and theoretical amplitude envelope.")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
     save_figure(fig, "fig3_hilbert_amplitude_observation.png")
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_amp, amplitude_noisy, color="#e76f51", linewidth=0.9, alpha=0.7, label="Noisy amplitude")
-    ax.plot(t_amp, amplitude_restored, color="#1d3557", linewidth=1.5, label="GLR-restored amplitude")
-    ax.plot(t_amp, amplitude_clean, color="#2a9d8f", linewidth=1.4, linestyle="--", label="Ground truth amplitude")
+    ax.plot(t_amp, amplitude_noisy, label="Observed amplitude", **styles["observed"])
+    ax.plot(t_amp, amplitude_restored, label="Restored amplitude", **styles["restored"])
+    ax.plot(t_amp, amplitude_clean, label="Theoretical amplitude", **styles["theoretical"])
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
-    ax.set_title("Amplitude restoration using GLR.")
+    ax.set_title("Amplitude restoration after the proposed denoising.")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
-    save_figure(fig, "fig4_glr_amplitude_restoration.png")
+    save_figure(fig, "fig4_gglr_amplitude_restoration.png")
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_freq, frequency_noisy, color="#e76f51", linewidth=0.9, alpha=0.7, label="Noisy frequency")
-    ax.plot(t_freq, frequency_restored, color="#1d3557", linewidth=1.5, label="GGLR-restored frequency")
-    ax.plot(t_freq, frequency_clean, color="#2a9d8f", linewidth=1.4, linestyle="--", label="Ground truth frequency")
+    ax.plot(t_freq, frequency_noisy, label="Observed frequency", **styles["observed"])
+    ax.plot(t_freq, frequency_restored, label="Restored frequency", **styles["restored"])
+    ax.plot(t_freq, frequency_clean, label="Theoretical frequency", **styles["theoretical"])
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Frequency (Hz)")
-    ax.set_title("Instantaneous frequency restoration using GGLR.")
+    ax.set_title("Instantaneous frequency restoration after the proposed denoising.")
     ax.legend(loc="upper left")
     ax.grid(True, alpha=0.3)
     save_figure(fig, "fig5_gglr_frequency_restoration.png")
 
 
-def plot_time_domain_result(t, clean_signal, noisy_signal, denoised_signal, method_label, filename, snr_in, snr_out):
-    residual_noisy = noisy_signal - clean_signal
-    residual_denoised = denoised_signal - clean_signal
-
-    fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
-    axes[0].plot(t, clean_signal, color="#2a9d8f", linewidth=1.3, label="Clean")
-    axes[0].plot(t, noisy_signal, color="#e76f51", linewidth=0.8, alpha=0.7, label="Noisy")
-    axes[0].set_ylabel("Amplitude")
-    axes[0].set_title(f"(a) Clean vs noisy signal (Input SNR: {snr_in:.2f} dB)")
-    axes[0].legend(loc="upper right")
-    axes[0].grid(True, alpha=0.3)
-
-    axes[1].plot(t, residual_noisy, color="#e76f51", linewidth=0.8, alpha=0.6, label="Noisy residual")
-    axes[1].plot(t, residual_denoised, color="#1d3557", linewidth=1.0, label=f"{method_label} residual")
-    axes[1].set_xlabel("Time (s)")
-    axes[1].set_ylabel("Residual")
-    axes[1].set_title(f"(b) Residual comparison (Output SNR: {snr_out:.2f} dB, Gain: {snr_out - snr_in:.2f} dB)")
-    axes[1].legend(loc="upper right")
-    axes[1].grid(True, alpha=0.3)
-
-    fig.suptitle(f"Time-domain denoising results of the {method_label} method.")
-    fig.tight_layout()
-    save_figure(fig, filename)
+def plot_noisy_signal_vs_clean(t, clean_signal, noisy_signal):
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(t, clean_signal, color="#2a9d8f", linewidth=1.4, label="Clean signal")
+    ax.plot(t, noisy_signal, color="#e76f51", linewidth=1.0, linestyle="--", alpha=0.85, label="Noisy signal")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
+    ax.set_title("Clean and noisy chirp signals.")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
+    save_figure(fig, "fig4_noisy_signal_vs_clean.png")
 
 
-def plot_all_methods_comparison(t, clean_signal, noisy_signal, denoised_signals):
-    residual_noisy = noisy_signal - clean_signal
+def plot_local_method_comparison(t, clean_signal, noisy_signal, denoised_signals, window_size=300):
+    center = len(t) // 2
+    start = max(0, center - window_size // 2)
+    end = start + window_size
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
-    axes[0].plot(t, clean_signal, color="#2a9d8f", linewidth=1.3, label="Original")
-    axes[0].plot(t, noisy_signal, color="#e76f51", linewidth=0.8, alpha=0.7, label="Noisy")
-    axes[0].set_ylabel("Amplitude")
-    axes[0].set_title("(a) Original and noisy signals")
-    axes[0].legend(loc="upper right")
-    axes[0].grid(True, alpha=0.3)
+    t_local = t[start:end]
+    clean_local = clean_signal[start:end]
+    noisy_local = noisy_signal[start:end]
+    x_limits = (t_local[0], t_local[-1])
 
     colors = {
-        "Proposed": "#1d3557",
+        "GGLR": "#1d3557",
         "DCNN": "#6a994e",
-        "Transformer": "#7b2cbf",
+        "Transformer-Encoder": "#7b2cbf",
     }
-    axes[1].plot(t, residual_noisy, color="#e76f51", linewidth=0.8, alpha=0.4, label="Noisy residual")
-    for method_name, denoised_signal in denoised_signals.items():
-        axes[1].plot(
-            t,
-            denoised_signal - clean_signal,
-            color=colors[method_name],
-            linewidth=1.0,
-            label=f"{method_name} residual",
-        )
-    axes[1].set_xlabel("Time (s)")
-    axes[1].set_ylabel("Residual")
-    axes[1].set_title("(b) Residual comparison of different denoising methods")
-    axes[1].legend(loc="upper right")
-    axes[1].grid(True, alpha=0.3)
 
-    fig.suptitle("Time-domain comparison of different denoising methods under the same noise condition.")
-    fig.tight_layout()
-    save_figure(fig, "fig8_all_methods_time_domain_comparison.png")
+    method_items = list(denoised_signals.items())
+    denoised_locals = {method_name: signal[start:end] for method_name, signal in method_items}
+    error_locals = {method_name: denoised_local - clean_local for method_name, denoised_local in denoised_locals.items()}
+
+    signal_stack = np.concatenate([clean_local, noisy_local, *denoised_locals.values()])
+    signal_margin = 0.08 * np.ptp(signal_stack) if np.ptp(signal_stack) > 0 else 1.0
+    signal_limits = (signal_stack.min() - signal_margin, signal_stack.max() + signal_margin)
+
+    error_stack = np.concatenate(list(error_locals.values()))
+    error_margin = 0.1 * np.ptp(error_stack) if np.ptp(error_stack) > 0 else 0.1
+    error_peak = max(abs(error_stack.min()), abs(error_stack.max())) + error_margin
+    error_limits = (-error_peak, error_peak)
+
+    fig = plt.figure(figsize=(15.5, 7), constrained_layout=True)
+    grid = fig.add_gridspec(2, 4, width_ratios=[1.15, 1.0, 1.0, 1.0])
+
+    noisy_ax = fig.add_subplot(grid[:, 0])
+    noisy_ax.plot(t_local, clean_local, color="#2a9d8f", linewidth=1.2, linestyle="--", label="Clean")
+    noisy_ax.plot(t_local, noisy_local, color="#e76f51", linewidth=1.0, alpha=0.9, label="Noisy")
+    noisy_ax.set_title("(a) Local noisy signal")
+    noisy_ax.set_xlabel("Time (s)")
+    noisy_ax.set_ylabel("Amplitude")
+    noisy_ax.set_xlim(*x_limits)
+    noisy_ax.set_ylim(*signal_limits)
+    noisy_ax.grid(True, alpha=0.3)
+    noisy_ax.legend(loc="upper right", fontsize=9)
+
+    for idx, (method_name, denoised_signal) in enumerate(method_items):
+        denoised_local = denoised_locals[method_name]
+        error_local = error_locals[method_name]
+        signal_ax = fig.add_subplot(grid[0, idx + 1], sharex=noisy_ax)
+        error_ax = fig.add_subplot(grid[1, idx + 1], sharex=noisy_ax)
+
+        signal_ax.plot(t_local, clean_local, color="#2a9d8f", linewidth=1.2, linestyle="--", label="Clean")
+        signal_ax.plot(t_local, denoised_local, color=colors[method_name], linewidth=1.0, label=method_name)
+        signal_ax.set_title(f"({chr(ord('b') + idx)}) {method_name} restoration")
+        signal_ax.set_xlim(*x_limits)
+        signal_ax.set_ylim(*signal_limits)
+        signal_ax.grid(True, alpha=0.3)
+        signal_ax.legend(loc="upper right", fontsize=9)
+        if idx == 0:
+            signal_ax.set_ylabel("Amplitude")
+
+        error_ax.plot(t_local, error_local, color=colors[method_name], linewidth=1.0)
+        error_ax.axhline(0.0, color="#666666", linewidth=0.8, linestyle="--", alpha=0.7)
+        error_ax.set_title(f"({chr(ord('e') + idx)}) {method_name} error")
+        error_ax.set_xlabel("Time (s)")
+        error_ax.set_xlim(*x_limits)
+        error_ax.set_ylim(*error_limits)
+        error_ax.grid(True, alpha=0.3)
+        if idx == 0:
+            error_ax.set_ylabel("Error")
+
+    fig.suptitle(f"Local comparison of denoising results over the middle {window_size} samples.")
+    save_figure(fig, "fig5_local_methods_comparison.png")
 
 
 def plot_quantitative_figures(results):
-    sigma_values = [row["sigma"] for row in results["Proposed"]]
+    sigma_values = [row["sigma"] for row in results["GGLR"]]
     method_colors = {
-        "Proposed": "#1d3557",
+        "GGLR": "#1d3557",
         "DCNN": "#6a994e",
-        "Transformer": "#7b2cbf",
+        "Transformer-Encoder": "#7b2cbf",
     }
 
     fig, ax = plt.subplots(figsize=(8.5, 4.5))
@@ -410,10 +437,11 @@ def plot_lambda_sensitivity(fs, T, f0, f1, sigma_noise, seed, ignore_ratio):
         denoised = proposed_denoise(
             chirp_noisy,
             fs,
-            sigmaa=0.1,
-            lambdaa=600,
+            sigmaa=600,
+            lambdaa=100,
             sigmaf=600,
             lambdaf=lambda_reg,
+            epochs=3,
         )["chirp_denoised"]
         snr_in = calculate_snr(chirp_clean, chirp_noisy, ignore_ratio=ignore_ratio)
         snr_out = calculate_snr(chirp_clean, denoised, ignore_ratio=ignore_ratio)
@@ -447,6 +475,19 @@ def export_metrics(results):
                 writer.writerow([method_name, row["sigma"], row["snr_input"], row["snr_output"], row["snr_gain"]])
 
 
+def export_comparison_table(results, a1_value, epochs):
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    comparison_path = OUTPUT_DIR / "comparison_a1_20_epoch3.csv"
+    with comparison_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["a1", "epochs", "method", "sigma", "snr_input", "snr_output", "snr_gain"])
+        for method_name, rows in results.items():
+            for row in rows:
+                writer.writerow(
+                    [a1_value, epochs, method_name, row["sigma"], row["snr_input"], row["snr_output"], row["snr_gain"]]
+                )
+
+
 def main():
     setup_style()
 
@@ -454,17 +495,28 @@ def main():
     T = 1.0
     f0 = 50.0
     f1 = 200.0
-    sigma_focus = 0.2
-    sigma_list = [2, 0.4, 0.2, 0.1, 0.05, 0.025]
+    a0 = 50.0
+    a1 = 20.0
+    sigma_focus = 10.0
+    sigma_list = [20, 10, 5, 2, 1, 0.5]
     seed = 42
     ignore_ratio = 0.1
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    sigmaa = 600
+    lambdaa = 100
+    sigmaf = 600
+    lambdaf = 0.1
+    epochs = 3
 
     plot_framework()
 
-    t, chirp_clean, chirp_noisy = generate_chirp_signal(fs, T, f0, f1, sigma=sigma_focus, seed=seed)
+    t, chirp_clean, chirp_noisy = generate_chirp_signal(
+        fs, T, f0, f1, a0=a0, a1=a1, sigma=sigma_focus, seed=seed
+    )
     clean_features = extract_clean_features(chirp_clean, fs)
-    proposed_features = proposed_denoise(chirp_noisy, fs)
+    proposed_features = proposed_denoise(
+        chirp_noisy, fs, sigmaa=sigmaa, lambdaa=lambdaa, sigmaf=sigmaf, lambdaf=lambdaf, epochs=epochs
+    )
     chirp_proposed = proposed_features["chirp_denoised"]
 
     dcnn_model = load_dcnn(device, len(chirp_clean))
@@ -473,61 +525,41 @@ def main():
     chirp_transformer = transformer_denoise(transformer_model, chirp_noisy, device)
 
     plot_observation_and_restoration_figures(t, clean_features, proposed_features)
-
-    snr_input_focus = calculate_snr(chirp_clean, chirp_noisy, ignore_ratio=ignore_ratio)
-    plot_time_domain_result(
-        t,
-        chirp_clean,
-        chirp_noisy,
-        chirp_proposed,
-        "proposed",
-        "fig6_proposed_time_domain_result.png",
-        snr_input_focus,
-        calculate_snr(chirp_clean, chirp_proposed, ignore_ratio=ignore_ratio),
-    )
-    plot_time_domain_result(
-        t,
-        chirp_clean,
-        chirp_noisy,
-        chirp_dcnn,
-        "DCNN",
-        "fig7_dcnn_time_domain_result.png",
-        snr_input_focus,
-        calculate_snr(chirp_clean, chirp_dcnn, ignore_ratio=ignore_ratio),
-    )
-    plot_time_domain_result(
-        t,
-        chirp_clean,
-        chirp_noisy,
-        chirp_transformer,
-        "Transformer",
-        "fig8_transformer_time_domain_result.png",
-        snr_input_focus,
-        calculate_snr(chirp_clean, chirp_transformer, ignore_ratio=ignore_ratio),
-    )
-    plot_all_methods_comparison(
+    plot_noisy_signal_vs_clean(t, chirp_clean, chirp_noisy)
+    plot_local_method_comparison(
         t,
         chirp_clean,
         chirp_noisy,
         {
-            "Proposed": chirp_proposed,
+            "GGLR": chirp_proposed,
             "DCNN": chirp_dcnn,
-            "Transformer": chirp_transformer,
+            "Transformer-Encoder": chirp_transformer,
         },
+        window_size=300,
     )
 
-    results = {"Proposed": [], "DCNN": [], "Transformer": []}
+    results = {"GGLR": [], "DCNN": [], "Transformer-Encoder": []}
     for sigma_noise in sigma_list:
-        _, chirp_clean_sigma, chirp_noisy_sigma = generate_chirp_signal(fs, T, f0, f1, sigma=sigma_noise, seed=seed)
-        chirp_proposed_sigma = proposed_denoise(chirp_noisy_sigma, fs)["chirp_denoised"]
+        _, chirp_clean_sigma, chirp_noisy_sigma = generate_chirp_signal(
+            fs, T, f0, f1, a0=a0, a1=a1, sigma=sigma_noise, seed=seed
+        )
+        chirp_proposed_sigma = proposed_denoise(
+            chirp_noisy_sigma,
+            fs,
+            sigmaa=sigmaa,
+            lambdaa=lambdaa,
+            sigmaf=sigmaf,
+            lambdaf=lambdaf,
+            epochs=epochs,
+        )["chirp_denoised"]
         chirp_dcnn_sigma = dcnn_denoise(dcnn_model, chirp_noisy_sigma, device)
         chirp_transformer_sigma = transformer_denoise(transformer_model, chirp_noisy_sigma, device)
 
         snr_input = calculate_snr(chirp_clean_sigma, chirp_noisy_sigma, ignore_ratio=ignore_ratio)
         method_outputs = {
-            "Proposed": chirp_proposed_sigma,
+            "GGLR": chirp_proposed_sigma,
             "DCNN": chirp_dcnn_sigma,
-            "Transformer": chirp_transformer_sigma,
+            "Transformer-Encoder": chirp_transformer_sigma,
         }
         for method_name, denoised_signal in method_outputs.items():
             snr_output = calculate_snr(chirp_clean_sigma, denoised_signal, ignore_ratio=ignore_ratio)
@@ -543,6 +575,7 @@ def main():
     plot_quantitative_figures(results)
     plot_lambda_sensitivity(fs, T, f0, f1, sigma_focus, seed, ignore_ratio)
     export_metrics(results)
+    export_comparison_table(results, a1, epochs)
 
     print(f"All figures have been saved to: {OUTPUT_DIR}")
 
