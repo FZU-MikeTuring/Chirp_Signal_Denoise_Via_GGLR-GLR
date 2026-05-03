@@ -55,15 +55,15 @@ if __name__ == "__main__":
     num_samples = 5000
     batch_size = 32
     epochs = 100
-    lr = 1e-3
+    lr = 1e-4
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     input_dim = 1
     embed_dim = 64
     num_heads = 4
     ff_dim = 128
-    num_encoder_blocks = 6
-    dropout = 0.1
+    num_encoder_blocks = 4
+    dropout = 0.05
 
     print(f"Using device: {device}")
     print(
@@ -90,9 +90,7 @@ if __name__ == "__main__":
         num_heads=num_heads,
         ff_dim=ff_dim,
         num_encoder_blocks=num_encoder_blocks,
-        num_decoder_blocks=0,
         dropout=dropout,
-        encoder_only=True,
     )
     print(f"Model parameter count: {sum(p.numel() for p in model.parameters())}")
 
