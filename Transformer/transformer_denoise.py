@@ -67,9 +67,7 @@ if __name__ == "__main__":
         num_heads=num_heads,
         ff_dim=ff_dim,
         num_encoder_blocks=num_encoder_blocks,
-        num_decoder_blocks=0,
         dropout=dropout,
-        encoder_only=True,
     )
     model.load_state_dict(torch.load("transformer_model.pth", map_location=device))
     model = model.to(device)

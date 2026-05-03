@@ -135,9 +135,7 @@ def load_transformer(device):
         num_heads=4,
         ff_dim=128,
         num_encoder_blocks=6,
-        num_decoder_blocks=0,
         dropout=0.1,
-        encoder_only=True,
     )
     model.load_state_dict(torch.load(TRANSFORMER_DIR / "transformer_model.pth", map_location=device))
     model = model.to(device)
